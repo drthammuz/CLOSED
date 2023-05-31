@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minimal Multiplayer</title>
+  <style>
+body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: rgb(69, 133, 202);
+    }
+    .overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(255, 255, 255, 0.9);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+    }
+
+    .character-option {
+      margin: 10px;
+      padding: 10px;
+      border: 1px solid black;
+      cursor: pointer;
+    }
+    #chat-console {
+  position: absolute;
+  bottom: calc(100% - 600px); /* Adjust this value according to your map height */
+  left: 0;
+  right: 0;
+  max-width: 800px; /* Adjust this value according to your map width */
+  margin: auto;
+  display: none;
+  background-color: rgba(50, 50, 50, 0.5);
+  transform: translateX(-0px); /* Adjust this value to move the chat area horizontally */
+}
+
+#chat-area {
+  height: 100px;
+  overflow-y: auto;
+  padding: 5px;
+  color: rgb(207, 68, 68);
+  font-family: monospace;
+}
+
+#chat-input {
+  width: calc(100%);
+  padding: 5px;
+  font-family: monospace;
+}
+#game-container {
+  background-color: rgb(49, 164, 83);
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 800px;
+    height: 600px;
+  }
+  </style>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap">
+</head>
+<body>
+
+  <div id="game-container"></div>
+  <div id="overlay" class="overlay">
+    <div class="character-option" data-character-id="1">Character 1</div>
+    <div class="character-option" data-character-id="2">Character 2</div>
+    <div class="character-option" data-character-id="3">Character 3</div>
+    <div class="character-option" data-character-id="4">Character 4</div>
+  </div>
+  <div id="chat-console">
+    <div id="chat-area"></div>
+    <input id="chat-input" type="text" placeholder="Press Enter to chat" />
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.1.3/dist/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+  <script>
+    const socket = io('http://135.181.158.154:5000');
+  </script>
+<script type="module">
+  import { GameScene } from './game.js';
+
+  let inventoryVisible = false;
+
+  const config = {
+  type: Phaser.AUTO,
+  width: 800,
+  height: 600,
+  backgroundColor: '#ffffff',
+  physics: {
+    default: 'arcade',
+  },
+  parent: 'game-container',
+};
+
+function startGame(characterData) {
+  game.scene.add('GameScene', GameScene, true, characterData);
+  //  game.scene.start('GameScene', characterData); (old code, needed?)
+}
+
+const game = new Phaser.Game(config);
+
+let selectedcharacterData;
+let chatVisible = false;
+let lastEnterPressTime = null;
+let chatVisibilityTimeout = null;
+
+    const overlay = document.getElementById('overlay');
+    const characterOptions = document.getElementsByClassName('character-option');
+
+    function fetchPlayerNames() {
+    for (const option of characterOptions) {
+      const id = option.getAttribute('data-character-id');
+      socket.emit('buttons', id, (response) => {
+        if (response.success) {
+          option.textContent = response.characterData.name;
+          if (!response.isAvailable) {
+            option.style.backgroundColor = 'gray';
+            option.style.cursor = 'not-allowed';
+            option.removeEventListener('click', selectCharacter);
+          }
+        } else {
+          console.error('Error fetching player names');
+        }
+      });
+    }
+  }
+
+
+  function selectCharacter(event) {
+  const id = event.target.getAttribute('data-character-id');
+  socket.emit('getcharacterData', id, (response) => {
+    if (response.success) {
+      overlay.style.display = 'none';
+      socket.emit('updateUnavailableCharacters', id);
+      window.characterData = response.characterData;
+      console.log ('XXX characterData: ', characterData); // 'XXX' added by me
+      startGame(response.characterData); // Call startGame function here
+    } else {
+      alert('Error selecting character');
+    }
+  });
+}
+
+  for (const option of characterOptions) {
+    option.addEventListener('click', selectCharacter);
+  }
+
+  fetchPlayerNames();
+
+//chatcode
+const chatConsole = document.getElementById('chat-console');
+const chatArea = document.getElementById('chat-area');
+const chatInput = document.getElementById('chat-input');
+let chatTimeout = null;
+
+function showChatConsole() {
+  chatConsole.style.display = 'block';
+}
+
+function hideChatConsole() {
+  chatConsole.style.display = 'none';
+}
+
+function addChatMessage(message) {
+  const messageElement = document.createElement('div');
+  messageElement.textContent = message;
+  chatArea.appendChild(messageElement);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function clearChatArea() {
+  chatArea.innerHTML = '';
+}
+
+function onChatMessageReceived(name, message) {
+  const messageElement = document.createElement('div');
+  const nameElement = document.createElement('span');
+  nameElement.textContent = name + ": ";
+  nameElement.style.color = getCharacterColor(name);
+  messageElement.appendChild(nameElement);
+  messageElement.appendChild(document.createTextNode(message));
+  chatArea.appendChild(messageElement);
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+function getCharacterColor(name) {
+  switch (name) {
+    case 'Thammuz':
+      return 'gold';
+    case 'Deedrah':
+      return 'indigo';
+    case 'Mortifer':
+      return 'yellow';
+    case 'Knag':
+      return 'pink';
+    default:
+      return 'white';
+  }
+}
+
+function getMessageFromInput() {
+  return chatInput.value.trim();
+}
+
+function clearMessageInput() {
+  chatInput.value = '';
+}
+
+chatInput.addEventListener('keydown', (event) => {
+  if (event.key === ' ') {
+    event.stopPropagation();
+  }
+  if (event.key === 'w') {
+    event.stopPropagation();
+  }
+  if (event.key === 'a') {
+    event.stopPropagation();
+  }
+  if (event.key === 's') {
+    event.stopPropagation();
+  }
+  if (event.key === 'd') {
+    event.stopPropagation();
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    const message = getMessageFromInput();
+    if (message) {
+  socket.emit('chatMessage', { name: characterData.name, message: message });
+  clearMessageInput();
+}
+  }
+});
+
+socket.on('chatMessage', (data) => {
+  onChatMessageReceived(data.name, data.message);
+});
+
+document.addEventListener("keydown", function (event) {
+  if (event.key === "Enter") {
+    if (!chatVisible) {
+      // Open chat input
+      chatInput.style.display = "block";
+      chatConsole.style.display = "block";
+      chatInput.focus();
+      chatVisible = true;
+    } else {
+      // Close chat input
+      chatInput.style.display = "none";
+      chatVisible = false;
+      // Send message and clear input
+      sendMessage(chatInput.value);
+      chatInput.value = "";
+      // Set or reset the chat console timeout
+      clearTimeout(chatTimeout);
+      chatTimeout = setTimeout(() => {
+        chatConsole.style.display = "none";
+      }, 10000);
+    }
+  }
+});
+
+//end of chatcode
+
+</script>
+</body>
+</html>

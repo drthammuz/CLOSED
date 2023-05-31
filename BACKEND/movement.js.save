@@ -1,0 +1,208 @@
+const { Pathfinder } = require('./pathfinding');
+const MovementTargets = require('./movementTargets');
+const { v4: uuidv4 } = require('uuid');
+const Brain = require('./brain');
+const { gameWorld } = require('./gameWorld');
+
+const TILE_WIDTH = 32;
+const TILE_HEIGHT = 32;
+
+
+
+    class Movement {
+    constructor(id, x, y, targetX, targetY, speed, currentMapId, locomotion, brainType, img) {
+
+                this.id = id;
+                this.x = x;
+                this.y = y;
+                this.speed = speed; 
+                this.tileCoords = this.pixelToTileCoordinates(x, y);
+                this.pathfinder = new Pathfinder();
+                this.path = [];
+                this.direction = 'stop';
+                this.lastX = this.x;
+                this.lastY = this.y;
+                this.targetX = targetX;
+                this.targetY = targetY;
+                this.currentMapId = currentMapId;
+                this.locomotion = locomotion;
+                this.brain = new Brain(brainType, currentMapId, locomotion);
+                this.movementTargets = new MovementTargets(this.pathfinder, currentMapId, locomotion);
+                this.img = img;
+                this.gameWorld = gameWorld;
+                this.isAttacking = false; 
+                this.attackCooldown = 0;
+                this.pathUpdateCooldown = 0; 
+                this.getTarget(gameWorld);  // call getTarget() here
+            
+
+    }
+
+    getAttackDirection(dx, dy) {
+        let xDiff = Math.abs(dx);
+        let yDiff = Math.abs(dy);
+    
+        if (xDiff > yDiff) {
+            return dx > 0 ? 'right' : 'left';
+        } else {
+            return dy > 0 ? 'down' : 'up';
+        }
+       
+    }
+
+    
+    pixelToTileCoordinates(x, y) {
+        return { x: Math.floor(x / TILE_WIDTH), y: Math.floor(y / TILE_HEIGHT) };
+ 	   }
+
+    tileToPixelCoordinates(x, y) {
+        return { x: x * TILE_WIDTH + TILE_WIDTH / 2, y: y * TILE_HEIGHT + TILE_HEIGHT / 2 };
+     }
+    
+
+    async getTarget() {
+        const playerDetection = await this.playerDetected();
+    
+        if (playerDetection.detected) {
+            if (playerDetection.distanceToPlayer <= 40) {
+                if (!this.isAttacking) {
+                    this.isAttacking = true;
+                    this.attackingPlayerId = playerDetection.player.id;
+                    this.attackDirection = playerDetection.attackDirection;
+                }
+            } else {
+                if (this.isAttacking) {
+                    this.isAttacking = false;
+                    this.attackingPlayerId = null;
+                }
+                this.path = await this.pathfinder.findPath(this.x, this.y, playerDetection.player.x, playerDetection.player.y, this.currentMapId, this.locomotion);
+           
+           	/var/zelda/movement.js}
+        } else {
+            if (this.isAttacking) {
+                if (!this.gameWorld.players.some(player => player.id === this.attackingPlayerId)) {
+                    this.isAttacking = false;
+                    this.attackingPlayerId = null;
+                }
+            }
+            if (!this.isAttacking) {
+                const randomResult = await this.movementTargets.random(this.x, this.y, this.currentMapId, this.locomotion);
+                console.log('Random Result:', randomResult);
+                this.path = randomResult.newPath;
+            }
+        }
+    }
+    
+    
+    
+async move() {
+    // Attack cooldown logic
+    if(this.isAttacking) {
+        if(this.attackCooldown <= 0) {
+            const playerDetection = await this.playerDetected();
+            if (playerDetection.detected) {
+                let dx = playerDetection.player.x - this.x;
+                let dy = playerDetection.player.y - this.y;
+                this.attackDirection = this.getAttackDirection(dx, dy);
+            }
+            // TODO: Perform attack here
+
+            // Reset attack cooldown
+            this.attackCooldown = 1000; // 1000 ms or 1 second
+        } else {
+            this.attackCooldown -= 30; // Decrease cooldown by frame duration (assuming 30ms per frame)
+        }
+    }
+    
+    // Path update cooldown logic
+    if(this.pathUpdateCooldown > 0) {
+        this.pathUpdateCooldown -= 30; // Decrease cooldown by frame duration (assuming 30ms per frame)
+    }
+
+    let dx = 0;
+    let dy = 0;
+  
+    if (this.path && this.path.length > 0) {
+        const nextStep = this.path[0];
+        let targetCoords;
+        
+        if (this.path.length === 1 && this.withinRangeOfPlayer(this.x, this.y, this.range)) {
+            targetCoords = {x: this.targetX, y: this.targetY};
+        } else {
+            targetCoords = this.tileToPixelCoordinates(nextStep.x, nextStep.y);
+        }
+  
+        dx = targetCoords.x - this.x;
+        dy = targetCoords.y - this.y;
+        let distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > this.speed) {
+            dx /= distance;
+            dy /= distance;
+
+            this.x += dx * this.speed;
+            this.y += dy * this.speed;
+        } else {
+            this.x = targetCoords.x;
+            this.y = targetCoords.y;
+            this.path.shift();
+        }
+    }
+
+    if(this.x === this.lastX && this.y === this.lastY) {
+        this.direction = 'stop';
+    } else {
+        if(Math.abs(dx) > Math.abs(dy)) {
+            this.direction = dx > 0 ? 'right' : 'left';
+        } else {
+            this.direction = dy > 0 ? 'down' : 'up';
+        }
+    }
+    this.lastX = this.x;
+    this.lastY = this.y;
+
+    if (!this.path || this.path.length === 0) {
+        await this.getTarget(); // Ensure this is awaited
+    } else {
+        const playerDetection = await this.playerDetected();
+
+        // If a player comes within range during walk towards the random target, 
+        // update the target based on the player's position, if path update cooldown is over
+        if (playerDetection.detected && playerDetection.distanceToPlayer <= 160 && this.pathUpdateCooldown <= 0) {
+            console.log('Player detected during random walk');
+            // Change here: set path to player position if detected during random walk
+            this.path = await this.pathfinder.findPath(this.x, this.y, playerDetection.player.x, playerDetection.player.y, this.currentMapId, this.locomotion);
+            console.log('New path:', this.path);
+            this.pathUpdateCooldown = 1000; // Reset path update cooldown
+        }
+    }
+}
+
+    
+    withinRangeOfPlayer(x, y, range) {
+        const dx = this.targetX - x;
+        const dy = this.targetY - y;
+        return Math.sqrt(dx * dx + dy * dy) <= range;
+    }
+    
+    async playerDetected() {
+        const player = await this.brain.playersInRange(this.x, this.y, this.gameWorld);
+        if (player) {
+            let dx = player.x - this.x;
+            let dy = player.y - this.y;
+            let distanceToPlayer = Math.sqrt(dx * dx + dy * dy);
+    
+            return {
+                detected: true,
+                player: player,
+                distanceToPlayer: distanceToPlayer,
+                attackDirection: this.getAttackDirection(dx, dy)
+            };
+        }
+    
+        return { detected: false };
+    }
+
+}
+
+module.exports = Movement;
